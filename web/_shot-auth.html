@@ -1,0 +1,52 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="styles.css" />
+<style>*{animation:none!important} .topbar{display:none}</style></head>
+<body class="auth-mode">
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="gB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#6366f1"/></linearGradient>
+  <linearGradient id="gP" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4b6ef5"/><stop offset=".55" stop-color="#8b5cf6"/><stop offset="1" stop-color="#ec4899"/></linearGradient>
+  <linearGradient id="gG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34e0a1"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient>
+  <linearGradient id="gGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f59e0b"/></linearGradient>
+</defs></svg>
+<div class="aurora"><span class="a1"></span><span class="a2"></span><span class="a3"></span><div class="aurora-grid"></div></div>
+<div class="worldmap"></div>
+<div class="bg-overlay"></div>
+<main class="view">
+<div class="auth-shell">
+  <aside class="auth-hero">
+    <div class="auth-hero-content">
+      <div class="auth-brand"><span class="brand-logo"><svg class="ico" viewBox="0 0 24 24" width="56" height="56"><path fill="url(#gP)" d="M12 2l7 3v6c0 4.4-3 8.4-7 9.9C8 19.4 5 15.4 5 11V5l7-3z"/><path fill="#fff" d="M10.7 14.4l-2.2-2.2 1.2-1.2 1 1 3.6-3.6 1.2 1.2-4.8 4.8z"/></svg></span> SafePay <span>Escrow</span></div>
+      <h2 class="auth-tagline">Karibu! Nunua na uuze bila wasiwasi.</h2>
+      <p class="auth-lead"><strong>Pesa yako iko salama.</strong> We hold the buyer's money securely and only release it to the seller once delivery is confirmed — or an admin resolves a dispute.</p>
+      <ul class="auth-features">
+        <li><span class="af-ic"><svg class="ico" viewBox="0 0 24 24" width="28" height="28"><rect x="5" y="10" width="14" height="10" rx="2.4" fill="url(#gG)"/><path d="M8 10V8a4 4 0 118 0v2" stroke="url(#gG)" stroke-width="2.2" fill="none"/></svg></span><div><strong>Pesa salama in escrow</strong><em>Funds are locked the moment a deal starts.</em></div></li>
+        <li><span class="af-ic"><svg class="ico" viewBox="0 0 24 24" width="28" height="28"><path d="M12 3v18M5 7h14" stroke="url(#gP)" stroke-width="2" fill="none"/><circle cx="7" cy="13" r="3.4" fill="url(#gP)"/><circle cx="17" cy="13" r="3.4" fill="url(#gB)"/></svg></span><div><strong>Fair dispute resolution</strong><em>Open a case with evidence, an admin decides.</em></div></li>
+        <li><span class="af-ic"><svg class="ico" viewBox="0 0 24 24" width="28" height="28"><path fill="url(#gGold)" d="M12 2.6l2.8 5.8 6.2.9-4.5 4.4 1 6.3-5.5-3-5.5 3 1-6.3L3 9.3l6.2-.9z"/></svg></span><div><strong>Trusted reputations</strong><em>Ratings after every completed deal.</em></div></li>
+      </ul>
+      <div class="auth-pay"><span>Lipa na</span><b class="pay-chip">M-Pesa</b><b class="pay-chip">PayPal</b><b class="pay-chip">Visa</b></div>
+      <p class="hero-disclaimer">SafePay holds funds in escrow until delivery is confirmed. Demo environment — payments are simulated.</p>
+    </div>
+  </aside>
+  <section class="auth-form">
+    <div class="auth-form-inner">
+      <h1>Create your account</h1>
+      <p class="sub">Sign up to buy and sell safely with escrow protection.</p>
+      <form autocomplete="off">
+        <label>Full name</label>
+        <div class="field"><input type="text" placeholder="e.g. Jane Wanjiku" /></div>
+        <label>Email</label>
+        <div class="email-wrap"><div class="field"><input type="email" placeholder="you@example.com" /></div></div>
+        <label>M-Pesa phone number</label>
+        <div class="field"><input type="tel" placeholder="e.g. 0712 345678" /></div>
+        <p class="field-hint">Where your money is sent when a deal completes.</p>
+        <label>Password</label>
+        <div class="field"><input type="password" placeholder="At least 8 characters" /></div>
+        <button type="button" class="auth-submit">Create account <span class="arr">→</span></button>
+      </form>
+      <p class="auth-swap">Already have an account? <span class="link">Log in</span></p>
+      <p class="auth-trust">🔒 256-bit encrypted · Your credentials are never shared</p>
+    </div>
+  </section>
+</div>
+</main>
+</body></html>

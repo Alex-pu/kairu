@@ -1,0 +1,443 @@
+openapi: 3.0.3
+info:
+  title: SafePay Escrow API
+  version: 0.1.0
+  description: >
+    REST API for the escrow platform. Buyers deposit funds into escrow; funds are held
+    until the buyer confirms delivery or an admin resolves a dispute. All monetary values
+    are integer minor units (cents). Errors return `{ "error": string }` (validation errors
+    also include `details`).
+servers:
+  - url: http://localhost:4000/api
+    description: Local development
+
+tags:
+  - name: Auth
+  - name: Transactions
+  - name: Disputes
+  - name: Ratings
+  - name: Notifications
+  - name: Admin
+  - name: Webhooks
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new account
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Credentials' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Email already registered, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive a JWT
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/Credentials' } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } } }
+        '401': { description: Invalid credentials, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /transactions:
+    post:
+      tags: [Transactions]
+      summary: Create an escrow and deposit funds (buyer)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sellerEmail, description, amountCents, method]
+              properties:
+                sellerEmail: { type: string, format: email }
+                description: { type: string, minLength: 3, maxLength: 500 }
+                amountCents: { type: integer, minimum: 1, example: 150000 }
+                method: { $ref: '#/components/schemas/PaymentMethod' }
+      responses:
+        '201': { description: Held transaction, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Seller not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    get:
+      tags: [Transactions]
+      summary: List my transactions (as buyer or seller)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Transaction' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /transactions/{id}:
+    get:
+      tags: [Transactions]
+      summary: Transaction detail with event timeline and dispute
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not a party to this transaction, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /transactions/{id}/confirm-received:
+    post:
+      tags: [Transactions]
+      summary: Buyer confirms receipt — releases held funds to the seller
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: Released, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '403': { description: Only the buyer may confirm, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Not in a held status, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /transactions/{id}/ship:
+    post:
+      tags: [Transactions]
+      summary: Seller marks the item as shipped (HELD → SHIPPED)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 300 }
+      responses:
+        '200': { description: Shipped, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '403': { description: Only the seller may update shipping, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Not in HELD status, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /transactions/{id}/delivered:
+    post:
+      tags: [Transactions]
+      summary: Seller marks the item as delivered (SHIPPED → DELIVERED)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: Delivered, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '403': { description: Only the seller may update shipping, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Not in SHIPPED status, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /webhooks/mpesa:
+    post:
+      tags: [Webhooks]
+      summary: M-Pesa (Daraja) STK callback — confirms an async deposit (PAYMENT_PENDING → HELD)
+      description: >
+        Public endpoint Safaricom calls after the buyer approves the STK push on their phone.
+        On ResultCode 0 the transaction is captured (HELD); otherwise it is CANCELLED. Always
+        returns 200 with `{ ResultCode: 0, ResultDesc: "Accepted" }` so Daraja stops retrying.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Body:
+                  type: object
+                  properties:
+                    stkCallback:
+                      type: object
+                      properties:
+                        CheckoutRequestID: { type: string }
+                        ResultCode: { type: integer }
+                        ResultDesc: { type: string }
+      responses:
+        '200': { description: Acknowledged }
+
+  /disputes:
+    post:
+      tags: [Disputes]
+      summary: Open a dispute on a held transaction
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionId, reason]
+              properties:
+                transactionId: { type: string, format: uuid }
+                reason: { type: string, minLength: 3, maxLength: 1000 }
+                evidenceUrls: { type: array, items: { type: string, format: uri }, default: [] }
+      responses:
+        '201': { description: Dispute created, content: { application/json: { schema: { $ref: '#/components/schemas/Dispute' } } } }
+        '403': { description: Not your transaction, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Transaction not in HELD status, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    get:
+      tags: [Disputes]
+      summary: Queue of open / under-review disputes (admin)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Dispute' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /disputes/{id}/evidence:
+    post:
+      tags: [Disputes]
+      summary: Attach another piece of evidence
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fileUrl]
+              properties: { fileUrl: { type: string, format: uri } }
+      responses:
+        '201': { description: Evidence added, content: { application/json: { schema: { $ref: '#/components/schemas/Evidence' } } } }
+        '403': { description: Not your dispute, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /disputes/{id}/rule:
+    post:
+      tags: [Disputes]
+      summary: Admin ruling — release to seller or refund buyer
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ruling]
+              properties:
+                ruling: { type: string, enum: [RELEASE, REFUND] }
+                adminNote: { type: string, maxLength: 1000 }
+      responses:
+        '200': { description: Resolved, content: { application/json: { schema: { $ref: '#/components/schemas/Dispute' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Already resolved, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /ratings:
+    post:
+      tags: [Ratings]
+      summary: Rate the other party after a released transaction
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transactionId, score]
+              properties:
+                transactionId: { type: string, format: uuid }
+                score: { type: integer, minimum: 1, maximum: 5 }
+                comment: { type: string, maxLength: 500 }
+      responses:
+        '201': { description: Rating created, content: { application/json: { schema: { $ref: '#/components/schemas/Rating' } } } }
+        '409': { description: Transaction not released, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /ratings/users/{userId}:
+    get:
+      tags: [Ratings]
+      summary: A user's average rating and history
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  average: { type: number, nullable: true, example: 4.5 }
+                  count: { type: integer }
+                  ratings: { type: array, items: { $ref: '#/components/schemas/Rating' } }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: My notifications with unread count
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread: { type: integer }
+                  items: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all my notifications read
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK }
+
+  /notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark one notification read
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK }
+
+  /admin/overview:
+    get:
+      tags: [Admin]
+      summary: Platform totals
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  heldCents: { type: integer, description: Sum of funds currently held }
+                  openDisputes: { type: integer }
+                  userCount: { type: integer }
+                  byStatus: { type: object, additionalProperties: { type: integer }, description: Transaction count per status }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List all users
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/User' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/transactions:
+    get:
+      tags: [Admin]
+      summary: List all transactions (with buyer/seller emails)
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Transaction' } } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/transactions/{id}:
+    get:
+      tags: [Admin]
+      summary: Full transaction detail (admin, any transaction)
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Transaction' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest: { description: Validation failed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unauthorized: { description: Missing or invalid token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Admin access required, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+    TokenResponse:
+      type: object
+      properties: { token: { type: string, description: JWT, valid 7 days } }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        details: { type: array, items: { type: object }, description: Present for validation errors }
+    PaymentMethod: { type: string, enum: [PAYPAL, MPESA, VISA] }
+    TransactionStatus: { type: string, enum: [CREATED, PAYMENT_PENDING, HELD, SHIPPED, DELIVERED, DISPUTED, RELEASED, REFUNDED, CANCELLED] }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        role: { type: string, enum: [USER, ADMIN] }
+        createdAt: { type: string, format: date-time }
+    Transaction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        buyerId: { type: string, format: uuid }
+        sellerId: { type: string, format: uuid }
+        description: { type: string }
+        amountCents: { type: integer }
+        currency: { type: string, example: KES }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        gatewayRef: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        events: { type: array, items: { $ref: '#/components/schemas/TransactionEvent' } }
+        dispute: { allOf: [{ $ref: '#/components/schemas/Dispute' }], nullable: true }
+    TransactionEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        fromStatus: { allOf: [{ $ref: '#/components/schemas/TransactionStatus' }], nullable: true }
+        toStatus: { $ref: '#/components/schemas/TransactionStatus' }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Dispute:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        transactionId: { type: string, format: uuid }
+        openedById: { type: string, format: uuid }
+        reason: { type: string }
+        status: { type: string, enum: [OPEN, UNDER_REVIEW, RESOLVED_RELEASE, RESOLVED_REFUND] }
+        adminNote: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        evidence: { type: array, items: { $ref: '#/components/schemas/Evidence' } }
+    Evidence:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        disputeId: { type: string, format: uuid }
+        fileUrl: { type: string, format: uri }
+        uploadedAt: { type: string, format: date-time }
+    Rating:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        transactionId: { type: string, format: uuid }
+        raterId: { type: string, format: uuid }
+        rateeId: { type: string, format: uuid }
+        score: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        transactionId: { type: string, format: uuid, nullable: true }
+        message: { type: string }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }

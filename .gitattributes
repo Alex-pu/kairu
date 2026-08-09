@@ -1,0 +1,8 @@
+# Normalize line endings: LF in the repo, native in the working tree.
+* text=auto eol=lf
+
+# Binary types git shouldn't touch.
+*.png binary
+*.jpg binary
+*.jar binary
+*.apk binary

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Android (also covered by android/.gitignore)
+*.apk
+local.properties
+
+# Prisma local dev database data (embedded)
+*-pgdata/
+
+deploy/.env

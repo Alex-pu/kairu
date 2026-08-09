@@ -1,0 +1,40 @@
+# Production stack for a VPS: PostgreSQL + the app, behind an nginx reverse proxy.
+# The app is bound to 127.0.0.1 only — nginx (on the host) terminates TLS and proxies to it.
+# Started by deploy/vps-setup.sh, which writes deploy/.env with the secrets.
+services:
+  db:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: escrow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@db:5432/escrow
+      JWT_SECRET: ${JWT_SECRET}
+      SIMULATE_PAYMENTS: ${SIMULATE_PAYMENTS:-true}
+      FORCE_HTTPS: "${FORCE_HTTPS:-false}"   # nginx handles http->https after certbot; keep off so IP/HTTP works pre-cert
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+      PORT: "4000"
+    ports:
+      - "127.0.0.1:4000:4000"
+
+volumes:
+  pgdata:

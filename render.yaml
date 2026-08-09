@@ -1,0 +1,34 @@
+# Render Blueprint — one-click deploy of the whole product (managed Postgres + a single
+# web service that serves the API and the website). In the Render dashboard: New +
+# "Blueprint", point it at this repo, and Apply. Free tier works for a demo.
+# Docs: https://render.com/docs/blueprint-spec
+databases:
+  - name: safepay-db
+    databaseName: escrow
+    plan: free
+
+services:
+  - type: web
+    name: safepay
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: safepay-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true        # Render generates a strong secret
+      - key: SEED_ADMIN_EMAIL
+        sync: false                # set your admin email in the dashboard
+      - key: SEED_ADMIN_PASSWORD
+        sync: false                # set a strong admin password in the dashboard
+      - key: SIMULATE_PAYMENTS
+        value: "true"              # flip to "false" and add gateway keys to go live
+      - key: FORCE_HTTPS
+        value: "true"              # Render terminates TLS; redirect HTTP -> HTTPS
+      - key: PORT
+        value: "4000"
