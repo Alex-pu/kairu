@@ -34,7 +34,7 @@ export function startMockGateways(port) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  Body: { stkCallback: { MerchantRequestID: rid('mr_'), CheckoutRequestID: checkoutId, ResultCode: 0, ResultDesc: 'The service request is processed successfully.' } },
+                  Body: { stkCallback: { MerchantRequestID: rid('mr_'), CheckoutRequestID: checkoutId, ResultCode: 0, ResultDesc: 'The service request is processed successfully.', CallbackMetadata: { Item: [{ Name: 'MpesaReceiptNumber', Value: rid('REC') }] } } },
                 }),
               }).catch(() => {});
             }, 300);
@@ -42,10 +42,19 @@ export function startMockGateways(port) {
         } catch {}
         return send({ MerchantRequestID: rid('mr_'), CheckoutRequestID: checkoutId, ResponseCode: '0', ResponseDescription: 'Success. Request accepted for processing', CustomerMessage: 'Success' });
       }
-      if (method === 'POST' && path === '/mpesa/b2c/v1/paymentrequest')
-        return send({ ConversationID: rid('AG_'), OriginatorConversationID: rid('oc_'), ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' });
-      if (method === 'POST' && path === '/mpesa/reversal/v1/request')
-        return send({ ConversationID: rid('AG_'), OriginatorConversationID: rid('oc_'), ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' });
+      if (method === 'POST' && (path === '/mpesa/b2c/v1/paymentrequest' || path === '/mpesa/reversal/v1/request')) {
+        const request = JSON.parse(body || '{}');
+        const originator = request.OriginatorConversationID;
+        try {
+          if (request.ResultURL && originator) setTimeout(() => {
+            fetch(request.ResultURL, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ Result: { ResultCode: 0, ResultDesc: 'Processed', OriginatorConversationID: originator, TransactionID: rid('B2C') } }),
+            }).catch(() => {});
+          }, 300);
+        } catch {}
+        return send({ ConversationID: rid('AG_'), OriginatorConversationID: originator, ResponseCode: '0', ResponseDescription: 'Accept the service request successfully.' });
+      }
 
       // ---- PayPal ----
       if (method === 'POST' && path === '/v1/oauth2/token') return send({ access_token: 'mock-paypal-token', token_type: 'Bearer', expires_in: 32400 });

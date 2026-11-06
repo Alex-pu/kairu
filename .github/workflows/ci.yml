@@ -61,6 +61,14 @@ jobs:
           gradle-version: "8.7"
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
+      - name: Upload latest debug APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: safepay-escrow-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
 
   # ---------------------------------------------------------------------------
   # STAGE 2 — BUILD.  Only after all tests pass, on a push to main. Builds the

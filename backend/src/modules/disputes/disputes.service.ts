@@ -1,4 +1,4 @@
-import { DisputeStatus } from '@prisma/client';
+import { DisputeStatus, TransactionStatus } from '@prisma/client';
 import { prisma } from '../../prisma';
 import { HttpError } from '../../common/middleware/error.middleware';
 import * as escrowService from '../escrow/escrow.service';
@@ -47,14 +47,16 @@ export async function ruleOnDispute(disputeId: string, ruling: 'RELEASE' | 'REFU
     throw new HttpError(409, 'Dispute already resolved');
   }
 
-  await escrowService.applyDisputeRuling(dispute.transactionId, ruling);
+  const transaction = await escrowService.applyDisputeRuling(dispute.transactionId, ruling);
+  const pending = transaction.status === TransactionStatus.RELEASE_PENDING || transaction.status === TransactionStatus.REFUND_PENDING;
 
   return prisma.dispute.update({
     where: { id: disputeId },
     data: {
-      status: ruling === 'RELEASE' ? DisputeStatus.RESOLVED_RELEASE : DisputeStatus.RESOLVED_REFUND,
+      // M-Pesa B2C/reversal is asynchronous; only resolve after the ResultURL confirms it.
+      status: pending ? DisputeStatus.UNDER_REVIEW : (ruling === 'RELEASE' ? DisputeStatus.RESOLVED_RELEASE : DisputeStatus.RESOLVED_REFUND),
       adminNote,
-      resolvedAt: new Date(),
+      resolvedAt: pending ? null : new Date(),
     },
   });
 }

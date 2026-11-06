@@ -8,6 +8,8 @@ android {
     namespace = "com.safepay.escrow"
     compileSdk = 34
 
+    val apiBase = providers.gradleProperty("apiBase").orElse("https://sasalink.co.ke/api/")
+
     defaultConfig {
         applicationId = "com.safepay.escrow"
         minSdk = 24
@@ -15,8 +17,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        // Point the app at the API. 10.0.2.2 is the host machine from the Android emulator.
-        buildConfigField("String", "API_BASE", "\"http://10.0.2.2:4000/api/\"")
+        buildConfigField("String", "API_BASE", "\"${apiBase.get()}\"")
     }
 
     buildTypes {
@@ -51,7 +52,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.compose.material:material-icons-core")
 
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.11.0")

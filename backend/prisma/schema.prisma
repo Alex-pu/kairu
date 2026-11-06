@@ -25,6 +25,8 @@ enum TransactionStatus {
   SHIPPED    // seller marked the item as shipped
   DELIVERED  // seller marked the item as delivered
   DISPUTED   // buyer or seller opened a dispute while held
+  RELEASE_PENDING // B2C payout submitted; awaiting Safaricom final callback
+  REFUND_PENDING  // reversal submitted; awaiting Safaricom final callback
   RELEASED   // funds paid out to seller
   REFUNDED   // funds returned to buyer
   CANCELLED  // never funded / cancelled before hold
@@ -106,7 +108,10 @@ model Transaction {
   currency      String             @default("KES")
   method        PaymentMethod
   status        TransactionStatus  @default(CREATED)
-  gatewayRef    String?            // id returned by PayPal/M-Pesa/Stripe for this payment
+  gatewayRef    String?            // gateway payment id (STK CheckoutRequestID before its callback)
+  mpesaReceipt  String?            // STK callback MpesaReceiptNumber; required for a reversal
+  payoutRequestRef String?         // merchant OriginatorConversationID for B2C/reversal callbacks
+  pendingFromStatus TransactionStatus? // state to restore if a B2C/reversal request fails
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 

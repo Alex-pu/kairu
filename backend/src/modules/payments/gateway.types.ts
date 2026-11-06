@@ -9,11 +9,18 @@ export interface DepositResult {
   raw?: unknown;
 }
 
+/** A transfer can be accepted synchronously but settle later through a gateway callback. */
+export interface OperationResult {
+  pending?: boolean;
+  /** Merchant-generated correlation id returned in the final gateway callback. */
+  requestRef?: string;
+}
+
 export interface PaymentGateway {
   /** Capture funds from the buyer into escrow (moves PAYMENT_PENDING -> HELD). */
-  deposit(params: { amountCents: number; currency: string; reference: string }): Promise<DepositResult>;
+  deposit(params: { amountCents: number; currency: string; reference: string; payerPhone?: string }): Promise<DepositResult>;
   /** Pay held funds out to the seller (moves HELD -> RELEASED). */
-  release(params: { gatewayRef: string; amountCents: number }): Promise<void>;
+  release(params: { gatewayRef: string; amountCents: number; recipientPhone?: string; requestRef?: string }): Promise<void | OperationResult>;
   /** Return held funds to the buyer (moves HELD/DISPUTED -> REFUNDED). */
-  refund(params: { gatewayRef: string; amountCents: number }): Promise<void>;
+  refund(params: { gatewayRef: string; amountCents: number; recipientPhone?: string; requestRef?: string }): Promise<void | OperationResult>;
 }

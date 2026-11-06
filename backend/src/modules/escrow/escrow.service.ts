@@ -1,4 +1,5 @@
-import { PaymentKind, PaymentMethod, TransactionStatus } from '@prisma/client';
+import { DisputeStatus, PaymentKind, PaymentMethod, TransactionStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { prisma } from '../../prisma';
 import { HttpError } from '../../common/middleware/error.middleware';
 import { getGateway } from '../payments/payments.service';
@@ -26,10 +27,22 @@ async function logEvent(
 }
 
 /** Records a payment-ledger entry (deposit/release/refund) for admin/payment tracking. */
-async function recordPayment(tx: { id: string; method: PaymentMethod; amountCents: number; gatewayRef: string | null }, kind: PaymentKind) {
+async function recordPayment(tx: { id: string; method: PaymentMethod; amountCents: number; gatewayRef: string | null }, kind: PaymentKind, gatewayRef = tx.gatewayRef) {
   await prisma.payment.create({
-    data: { transactionId: tx.id, method: tx.method, kind, amountCents: tx.amountCents, gatewayRef: tx.gatewayRef, status: 'SUCCESS' },
+    data: { transactionId: tx.id, method: tx.method, kind, amountCents: tx.amountCents, gatewayRef, status: 'SUCCESS' },
   });
+}
+
+/** Converts Kenyan customer input such as 0712 345 678 to Daraja's 254712345678. */
+function mpesaPhone(phone: string | null | undefined, label: string) {
+  const digits = (phone ?? '').replace(/\D/g, '');
+  const normalized = digits.startsWith('0') ? `254${digits.slice(1)}` : digits.startsWith('7') ? `254${digits}` : digits;
+  if (!/^2547\d{8}$/.test(normalized)) throw new HttpError(400, `A valid Kenyan M-Pesa phone number is required for the ${label}`);
+  return normalized;
+}
+
+function operationRef(prefix: 'rel' | 'ref') {
+  return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
 }
 
 export async function createEscrow(params: {
@@ -39,8 +52,12 @@ export async function createEscrow(params: {
   amountCents: number;
   method: PaymentMethod;
 }) {
-  const seller = await prisma.user.findUnique({ where: { email: params.sellerEmail } });
+  const [seller, buyer] = await Promise.all([
+    prisma.user.findUnique({ where: { email: params.sellerEmail } }),
+    prisma.user.findUnique({ where: { id: params.buyerId } }),
+  ]);
   if (!seller) throw new HttpError(404, 'No account found for that seller email');
+  if (!buyer) throw new HttpError(401, 'Buyer account not found');
   if (seller.id === params.buyerId) throw new HttpError(400, "You can't open an escrow with yourself");
 
   const transaction = await prisma.transaction.create({
@@ -71,6 +88,7 @@ export async function createEscrow(params: {
     amountCents: params.amountCents,
     currency: 'KES',
     reference: transaction.id,
+    payerPhone: params.method === PaymentMethod.MPESA ? mpesaPhone(buyer.phone, 'buyer') : undefined,
   });
   const amount = money(params.amountCents, transaction.currency);
 
@@ -107,7 +125,7 @@ export async function createEscrow(params: {
  * Idempotent: only acts on a transaction still in PAYMENT_PENDING, so duplicate
  * webhook deliveries are safely ignored.
  */
-export async function confirmDeposit(gatewayRef: string, success: boolean) {
+export async function confirmDeposit(gatewayRef: string, success: boolean, mpesaReceipt?: string) {
   if (!gatewayRef) return null;
   const tx = await prisma.transaction.findFirst({
     where: { gatewayRef, status: TransactionStatus.PAYMENT_PENDING },
@@ -117,7 +135,7 @@ export async function confirmDeposit(gatewayRef: string, success: boolean) {
   if (success) {
     const held = await prisma.transaction.update({
       where: { id: tx.id },
-      data: { status: TransactionStatus.HELD },
+      data: { status: TransactionStatus.HELD, mpesaReceipt: mpesaReceipt ?? undefined },
     });
     await logEvent(tx.id, TransactionStatus.PAYMENT_PENDING, TransactionStatus.HELD, 'Payment confirmed — funds captured and locked');
     await recordPayment(held, PaymentKind.DEPOSIT);
@@ -133,6 +151,58 @@ export async function confirmDeposit(gatewayRef: string, success: boolean) {
   await logEvent(tx.id, TransactionStatus.PAYMENT_PENDING, TransactionStatus.CANCELLED, 'Payment failed or was cancelled by the buyer');
   await notify(tx.buyerId, `Your M-Pesa payment for "${tx.description}" was not completed, so the escrow was cancelled.`, tx.id);
   return cancelled;
+}
+
+async function markPayoutPending(
+  tx: { id: string; status: TransactionStatus },
+  status: 'RELEASE_PENDING' | 'REFUND_PENDING',
+  requestRef: string,
+  note: string
+) {
+  const pending = await prisma.transaction.update({
+    where: { id: tx.id },
+    data: { status, payoutRequestRef: requestRef, pendingFromStatus: tx.status },
+  });
+  await logEvent(tx.id, tx.status, status, `${note}; awaiting Safaricom confirmation`);
+  return pending;
+}
+
+/** Handles the final B2C/reversal ResultURL or QueueTimeOutURL callback. */
+export async function confirmPayout(requestRef: string, success: boolean, payoutRef?: string) {
+  if (!requestRef) return null;
+  const tx = await prisma.transaction.findFirst({
+    where: {
+      payoutRequestRef: requestRef,
+      status: { in: [TransactionStatus.RELEASE_PENDING, TransactionStatus.REFUND_PENDING] },
+    },
+  });
+  if (!tx) return null; // idempotent duplicate or unknown callback
+
+  const isRelease = tx.status === TransactionStatus.RELEASE_PENDING;
+  const finalStatus = success
+    ? (isRelease ? TransactionStatus.RELEASED : TransactionStatus.REFUNDED)
+    : (tx.pendingFromStatus ?? TransactionStatus.HELD);
+  const updated = await prisma.transaction.update({
+    where: { id: tx.id },
+    data: { status: finalStatus, payoutRequestRef: null, pendingFromStatus: null },
+  });
+  await logEvent(tx.id, tx.status, finalStatus, success
+    ? `Safaricom confirmed ${isRelease ? 'B2C payout' : 'reversal'}`
+    : `Safaricom rejected or timed out ${isRelease ? 'B2C payout' : 'reversal'}`);
+
+  if (success) {
+    await recordPayment(tx, isRelease ? PaymentKind.RELEASE : PaymentKind.REFUND, payoutRef ?? tx.gatewayRef);
+    await prisma.dispute.updateMany({
+      where: { transactionId: tx.id, status: DisputeStatus.UNDER_REVIEW },
+      data: { status: isRelease ? DisputeStatus.RESOLVED_RELEASE : DisputeStatus.RESOLVED_REFUND, resolvedAt: new Date() },
+    });
+    await notifyBoth(tx.buyerId, tx.sellerId,
+      `${isRelease ? 'M-Pesa payout to the seller' : 'M-Pesa refund to the buyer'} was confirmed by Safaricom.`, tx.id);
+  } else {
+    await notifyBoth(tx.buyerId, tx.sellerId,
+      `Safaricom did not complete the ${isRelease ? 'seller payout' : 'buyer refund'}; the escrow remains ${finalStatus}.`, tx.id);
+  }
+  return updated;
 }
 
 export async function listMyTransactions(userId: string) {
@@ -202,7 +272,15 @@ export async function confirmReceived(userId: string, transactionId: string) {
   }
 
   const gateway = getGateway(tx.method);
-  await gateway.release({ gatewayRef: tx.gatewayRef!, amountCents: tx.amountCents });
+  const seller = await prisma.user.findUnique({ where: { id: tx.sellerId }, select: { phone: true } });
+  const requestRef = tx.method === PaymentMethod.MPESA ? operationRef('rel') : undefined;
+  const operation = await gateway.release({
+    gatewayRef: tx.gatewayRef!, amountCents: tx.amountCents,
+    recipientPhone: tx.method === PaymentMethod.MPESA ? mpesaPhone(seller?.phone, 'seller') : undefined,
+    requestRef,
+  });
+
+  if (operation?.pending) return markPayoutPending(tx, TransactionStatus.RELEASE_PENDING, requestRef!, 'B2C payout submitted');
 
   const updated = await prisma.transaction.update({
     where: { id: transactionId },
@@ -229,9 +307,15 @@ export async function applyDisputeRuling(
   const toStatus = ruling === 'RELEASE' ? TransactionStatus.RELEASED : TransactionStatus.REFUNDED;
 
   if (ruling === 'RELEASE') {
-    await gateway.release({ gatewayRef: tx.gatewayRef!, amountCents: tx.amountCents });
+    const seller = await prisma.user.findUnique({ where: { id: tx.sellerId }, select: { phone: true } });
+    const requestRef = tx.method === PaymentMethod.MPESA ? operationRef('rel') : undefined;
+    const operation = await gateway.release({ gatewayRef: tx.gatewayRef!, amountCents: tx.amountCents, recipientPhone: tx.method === PaymentMethod.MPESA ? mpesaPhone(seller?.phone, 'seller') : undefined, requestRef });
+    if (operation?.pending) return markPayoutPending(tx, TransactionStatus.RELEASE_PENDING, requestRef!, 'Admin release ruling');
   } else {
-    await gateway.refund({ gatewayRef: tx.gatewayRef!, amountCents: tx.amountCents });
+    const requestRef = tx.method === PaymentMethod.MPESA ? operationRef('ref') : undefined;
+    if (tx.method === PaymentMethod.MPESA && !tx.mpesaReceipt) throw new HttpError(409, 'Cannot reverse this M-Pesa payment before its receipt is confirmed');
+    const operation = await gateway.refund({ gatewayRef: tx.method === PaymentMethod.MPESA ? tx.mpesaReceipt! : tx.gatewayRef!, amountCents: tx.amountCents, requestRef });
+    if (operation?.pending) return markPayoutPending(tx, TransactionStatus.REFUND_PENDING, requestRef!, 'Admin refund ruling');
   }
 
   const updated = await prisma.transaction.update({ where: { id: transactionId }, data: { status: toStatus } });
@@ -323,7 +407,10 @@ export async function cancelTransaction(userId: string, transactionId: string) {
   const wasHeld = tx.status === TransactionStatus.HELD;
   if (wasHeld) {
     const gateway = getGateway(tx.method);
-    await gateway.refund({ gatewayRef: tx.gatewayRef!, amountCents: tx.amountCents });
+    const requestRef = tx.method === PaymentMethod.MPESA ? operationRef('ref') : undefined;
+    if (tx.method === PaymentMethod.MPESA && !tx.mpesaReceipt) throw new HttpError(409, 'Cannot reverse this M-Pesa payment before its receipt is confirmed');
+    const operation = await gateway.refund({ gatewayRef: tx.method === PaymentMethod.MPESA ? tx.mpesaReceipt! : tx.gatewayRef!, amountCents: tx.amountCents, requestRef });
+    if (operation?.pending) return markPayoutPending(tx, TransactionStatus.REFUND_PENDING, requestRef!, `Cancelled by the ${tx.buyerId === userId ? 'buyer' : 'seller'}`);
   }
 
   const cancelled = await prisma.transaction.update({

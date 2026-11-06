@@ -10,7 +10,7 @@ This is a standard Gradle Android project. Easiest path:
 
 1. Open the `android/` folder in **Android Studio** (Hedgehog or newer). It will download the
    Gradle wrapper, Android SDK, and dependencies on first sync.
-2. Start the backend so the API is reachable, then Run the app on an emulator.
+2. Run the app on an emulator or connected Android phone.
 
 From the command line (with a local Gradle 8.7+ or after Studio generates the wrapper):
 
@@ -26,9 +26,30 @@ gradle wrapper        # first time only, to create ./gradlew
 ## API base URL
 
 Set in [app/build.gradle.kts](app/build.gradle.kts) as `API_BASE`. Defaults to
-`http://10.0.2.2:4000/api/` — `10.0.2.2` is how the Android **emulator** reaches `localhost` on the
-host machine. For a physical device, use your machine's LAN IP (and serve the API over HTTPS in
-production; `usesCleartextTraffic` is enabled only for local development).
+`https://sasalink.co.ke/api/`, so generated APKs talk to the live VPS by default.
+
+For local emulator testing, override the API at build time:
+
+```
+./gradlew assembleDebug -PapiBase=http://10.0.2.2:4000/api/
+```
+
+`10.0.2.2` is how the Android emulator reaches `localhost` on the host machine. For a physical
+device against a local backend, use your machine's LAN IP. For production, use HTTPS.
+
+## APK outputs
+
+Debug APK, signed by the Android debug key and installable for testing:
+
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+Release APK, optimized but unsigned until you configure a release keystore:
+
+```
+app/build/outputs/apk/release/app-release-unsigned.apk
+```
 
 ## Structure
 

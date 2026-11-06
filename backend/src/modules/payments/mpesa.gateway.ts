@@ -20,12 +20,18 @@ function timestamp() {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
+function required(name: string) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required M-Pesa configuration: ${name}`);
+  return value;
+}
+
 export const mpesaGateway: PaymentGateway = {
-  async deposit({ amountCents, reference }) {
+  async deposit({ amountCents, reference, payerPhone }) {
     if (SIMULATE_PAYMENTS) return { gatewayRef: fakeRef('MPESA') };
 
-    const shortcode = process.env.MPESA_SHORTCODE!;
-    const passkey = process.env.MPESA_PASSKEY!;
+    const shortcode = required('MPESA_SHORTCODE');
+    const passkey = required('MPESA_PASSKEY');
     const ts = timestamp();
     const password = Buffer.from(`${shortcode}${passkey}${ts}`).toString('base64');
     const token = await getAccessToken();
@@ -41,22 +47,23 @@ export const mpesaGateway: PaymentGateway = {
         Timestamp: ts,
         TransactionType: 'CustomerPayBillOnline',
         Amount: Math.round(amountCents / 100),
-        PartyA: process.env.MPESA_TEST_MSISDN, // buyer phone number, sandbox test number for now
+        PartyA: payerPhone ?? required('MPESA_TEST_MSISDN'),
         PartyB: shortcode,
-        PhoneNumber: process.env.MPESA_TEST_MSISDN,
-        CallBackURL: process.env.MPESA_CALLBACK_URL,
+        PhoneNumber: payerPhone ?? required('MPESA_TEST_MSISDN'),
+        CallBackURL: required('MPESA_STK_CALLBACK_URL'),
         AccountReference: reference,
         TransactionDesc: 'Escrow deposit',
       }),
     });
     if (!res.ok) throw new Error(`Daraja STK push failed: ${res.status}`);
-    const data = (await res.json()) as { CheckoutRequestID: string };
+    const data = (await res.json()) as { CheckoutRequestID?: string; ResponseCode?: string; errorMessage?: string };
+    if (data.ResponseCode !== '0' || !data.CheckoutRequestID) throw new Error(`Daraja STK push was rejected: ${data.errorMessage ?? 'missing CheckoutRequestID'}`);
     // Actual payment confirmation arrives asynchronously at CallBackURL — the
     // transaction stays PAYMENT_PENDING until our /api/webhooks/mpesa handler fires.
     return { gatewayRef: data.CheckoutRequestID, pending: true, raw: data };
   },
 
-  async release({ amountCents }) {
+  async release({ amountCents, recipientPhone, requestRef }) {
     if (SIMULATE_PAYMENTS) return;
     // Payout to the seller via Daraja B2C. Needs a B2C-enabled shortcode + initiator
     // security credential (provisioned by Safaricom on the production app). The seller's
@@ -66,21 +73,24 @@ export const mpesaGateway: PaymentGateway = {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        InitiatorName: process.env.MPESA_INITIATOR_NAME,
-        SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+        InitiatorName: required('MPESA_INITIATOR_NAME'),
+        SecurityCredential: required('MPESA_SECURITY_CREDENTIAL'),
         CommandID: 'BusinessPayment',
         Amount: Math.round(amountCents / 100),
-        PartyA: process.env.MPESA_B2C_SHORTCODE ?? process.env.MPESA_SHORTCODE,
-        PartyB: process.env.MPESA_TEST_MSISDN,
+        PartyA: process.env.MPESA_B2C_SHORTCODE || required('MPESA_SHORTCODE'),
+        PartyB: recipientPhone ?? required('MPESA_TEST_MSISDN'),
         Remarks: 'Escrow release',
-        QueueTimeOutURL: process.env.MPESA_CALLBACK_URL,
-        ResultURL: process.env.MPESA_CALLBACK_URL,
+        QueueTimeOutURL: required('MPESA_B2C_TIMEOUT_URL'),
+        ResultURL: required('MPESA_B2C_RESULT_URL'),
+        OriginatorConversationID: requestRef,
       }),
     });
-    if (!res.ok) throw new Error(`Daraja B2C payout failed: ${res.status}`);
+    const data = (await res.json()) as { ResponseCode?: string; ResponseDescription?: string };
+    if (!res.ok || data.ResponseCode !== '0') throw new Error(`Daraja B2C payout failed: ${data.ResponseDescription ?? res.status}`);
+    return { pending: true, requestRef };
   },
 
-  async refund({ gatewayRef, amountCents }) {
+  async refund({ gatewayRef, amountCents, recipientPhone, requestRef }) {
     if (SIMULATE_PAYMENTS) return;
     // Return funds to the buyer via the Daraja Transaction Reversal API.
     const token = await getAccessToken();
@@ -88,18 +98,22 @@ export const mpesaGateway: PaymentGateway = {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        Initiator: process.env.MPESA_INITIATOR_NAME,
-        SecurityCredential: process.env.MPESA_SECURITY_CREDENTIAL,
+        Initiator: required('MPESA_INITIATOR_NAME'),
+        SecurityCredential: required('MPESA_SECURITY_CREDENTIAL'),
         CommandID: 'TransactionReversal',
         TransactionID: gatewayRef,
         Amount: Math.round(amountCents / 100),
-        ReceiverParty: process.env.MPESA_SHORTCODE,
+        ReceiverParty: required('MPESA_SHORTCODE'),
         RecieverIdentifierType: '11',
-        ResultURL: process.env.MPESA_CALLBACK_URL,
-        QueueTimeOutURL: process.env.MPESA_CALLBACK_URL,
+        ResultURL: required('MPESA_B2C_RESULT_URL'),
+        QueueTimeOutURL: required('MPESA_B2C_TIMEOUT_URL'),
         Remarks: 'Escrow refund',
+        Occasion: 'Escrow refund',
+        OriginatorConversationID: requestRef,
       }),
     });
-    if (!res.ok) throw new Error(`Daraja reversal failed: ${res.status}`);
+    const data = (await res.json()) as { ResponseCode?: string; ResponseDescription?: string };
+    if (!res.ok || data.ResponseCode !== '0') throw new Error(`Daraja reversal failed: ${data.ResponseDescription ?? res.status}`);
+    return { pending: true, requestRef };
   },
 };

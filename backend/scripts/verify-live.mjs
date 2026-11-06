@@ -65,7 +65,9 @@ async function releasePath(method, mockPort) {
   check(`${method}: gatewayRef is a REAL ref (not simulated)`, tx?.gatewayRef && !/SIMULATED/.test(tx.gatewayRef), `got ${tx?.gatewayRef}`);
 
   const rel = await api(`/transactions/${tx.id}/confirm-received`, { method: 'POST', token: buyer });
-  check(`${method}: release succeeded (real payout/capture)`, rel.status === 200 && rel.data?.status === 'RELEASED', `HTTP ${rel.status}: ${JSON.stringify(rel.data)}`);
+  check(`${method}: release accepted (real payout/capture)`, rel.status === 200, `HTTP ${rel.status}: ${JSON.stringify(rel.data)}`);
+  const final = method === 'MPESA' ? await waitForStatus(tx.id, buyer, 'RELEASED') : rel.data;
+  check(`${method}: release finalized`, final?.status === 'RELEASED', `got ${final?.status}`);
 }
 
 async function refundPath(method, adminToken) {
@@ -79,7 +81,7 @@ async function refundPath(method, adminToken) {
   const d = (await api('/disputes', { token: adminToken })).data.find((x) => x.transactionId === tx.id);
   const ruling = await api(`/disputes/${d.id}/rule`, { method: 'POST', token: adminToken, body: { ruling: 'REFUND' } });
   check(`${method}: refund ruling succeeded (real reversal/refund call)`, ruling.status === 200, `HTTP ${ruling.status}: ${JSON.stringify(ruling.data)}`);
-  const fin = (await api(`/transactions/${tx.id}`, { token: buyer })).data;
+  const fin = method === 'MPESA' ? await waitForStatus(tx.id, buyer, 'REFUNDED') : (await api(`/transactions/${tx.id}`, { token: buyer })).data;
   check(`${method}: final status REFUNDED`, fin.status === 'REFUNDED', `got ${fin.status}`);
 }
 
@@ -114,8 +116,10 @@ async function main() {
         // M-Pesa / Daraja
         MPESA_BASE_URL: mockBase, MPESA_CONSUMER_KEY: 'mock', MPESA_CONSUMER_SECRET: 'mock',
         MPESA_SHORTCODE: '174379', MPESA_PASSKEY: 'mock', MPESA_TEST_MSISDN: '254708374149',
-        MPESA_CALLBACK_URL: `http://127.0.0.1:${PORT_API}/api/webhooks/mpesa`, MPESA_INITIATOR_NAME: 'testapi',
+        MPESA_STK_CALLBACK_URL: `http://127.0.0.1:${PORT_API}/api/webhooks/mpesa/stk`, MPESA_INITIATOR_NAME: 'testapi',
         MPESA_SECURITY_CREDENTIAL: 'mock', MPESA_B2C_SHORTCODE: '600000',
+        MPESA_B2C_RESULT_URL: `http://127.0.0.1:${PORT_API}/api/webhooks/mpesa/b2c/result`,
+        MPESA_B2C_TIMEOUT_URL: `http://127.0.0.1:${PORT_API}/api/webhooks/mpesa/b2c/timeout`,
         // PayPal
         PAYPAL_BASE_URL: mockBase, PAYPAL_CLIENT_ID: 'mock', PAYPAL_CLIENT_SECRET: 'mock',
         PAYPAL_PAYOUT_PLACEHOLDER_EMAIL: 'seller@example.com',
