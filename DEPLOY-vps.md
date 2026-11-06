@@ -88,9 +88,9 @@ Edit `deploy/.env`, set `SIMULATE_PAYMENTS=false`, add your M-Pesa/PayPal/Stripe
 (see `backend/.env.example`), then re-run the update command above.
 
 For real M-Pesa, configure these public HTTPS callbacks:
-`https://YOUR_DOMAIN/api/webhooks/mpesa/stk`,
-`https://YOUR_DOMAIN/api/webhooks/mpesa/b2c/result`, and
-`https://YOUR_DOMAIN/api/webhooks/mpesa/b2c/timeout`.
+`https://app.sasalink.co.ke/api/webhooks/mpesa/stk`,
+`https://app.sasalink.co.ke/api/webhooks/mpesa/b2c/result`, and
+`https://app.sasalink.co.ke/api/webhooks/mpesa/b2c/timeout`.
 
 ---
 

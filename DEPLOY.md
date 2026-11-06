@@ -47,9 +47,9 @@ Payments run simulated (`SIMULATE_PAYMENTS=true`) until you add gateway keys.
    | `MPESA_SHORTCODE` | `174379` (sandbox Paybill) |
    | `MPESA_PASSKEY` | sandbox passkey from Daraja |
    | `MPESA_TEST_MSISDN` | sandbox test phone number |
-   | `MPESA_STK_CALLBACK_URL` | `https://<your-render-url>/api/webhooks/mpesa/stk` |
-   | `MPESA_B2C_RESULT_URL` | `https://<your-render-url>/api/webhooks/mpesa/b2c/result` |
-   | `MPESA_B2C_TIMEOUT_URL` | `https://<your-render-url>/api/webhooks/mpesa/b2c/timeout` |
+   | `MPESA_STK_CALLBACK_URL` | `https://app.sasalink.co.ke/api/webhooks/mpesa/stk` |
+   | `MPESA_B2C_RESULT_URL` | `https://app.sasalink.co.ke/api/webhooks/mpesa/b2c/result` |
+   | `MPESA_B2C_TIMEOUT_URL` | `https://app.sasalink.co.ke/api/webhooks/mpesa/b2c/timeout` |
 
 3. The STK flow is already wired end-to-end: deposit stays `PAYMENT_PENDING` until the
    buyer approves on their phone; Safaricom then calls `/api/webhooks/mpesa`, which locks

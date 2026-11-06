@@ -8,7 +8,7 @@ android {
     namespace = "com.safepay.escrow"
     compileSdk = 34
 
-    val apiBase = providers.gradleProperty("apiBase").orElse("https://sasalink.co.ke/api/")
+    val apiBase = providers.gradleProperty("apiBase").orElse("https://app.sasalink.co.ke/api/")
 
     defaultConfig {
         applicationId = "com.safepay.escrow"

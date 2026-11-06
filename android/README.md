@@ -26,7 +26,7 @@ gradle wrapper        # first time only, to create ./gradlew
 ## API base URL
 
 Set in [app/build.gradle.kts](app/build.gradle.kts) as `API_BASE`. Defaults to
-`https://sasalink.co.ke/api/`, so generated APKs talk to the live VPS by default.
+`https://app.sasalink.co.ke/api/`, so generated APKs talk to the live VPS by default.
 
 For local emulator testing, override the API at build time:
 
